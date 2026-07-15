@@ -86,6 +86,33 @@ const getVideoMetadata = (inputPath: string): Promise<ffmpeg.FfprobeData> => {
   });
 };
 
+// Helper: Extract audio from video
+const extractAudio = (inputPath: string, outputPath: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    let cmd = ffmpeg(inputPath);
+    let timeoutId = setTimeout(() => {
+      try { cmd.kill('SIGKILL'); } catch (e) {}
+      resolve(false);
+    }, 60000); // 1 minute max for audio extraction
+
+    cmd
+      .noVideo()
+      .audioCodec('libmp3lame')
+      .audioBitrate('128k')
+      .output(outputPath)
+      .on('end', () => {
+        clearTimeout(timeoutId);
+        resolve(true);
+      })
+      .on('error', (err) => {
+        clearTimeout(timeoutId);
+        console.error("Audio extraction error:", err);
+        resolve(false);
+      })
+      .run();
+  });
+};
+
 // Helper: Extract frames from video in a memory-efficient way
 const extractFrames = async (inputPath: string, outputFolder: string): Promise<string[]> => {
   let duration = 0;
@@ -135,11 +162,11 @@ const extractFrames = async (inputPath: string, outputFolder: string): Promise<s
         
         filesWithSize.sort((a, b) => b.size - a.size);
         
-        // Keep max 10 frames to avoid large payloads to AI
-        const finalFrames = filesWithSize.slice(0, 10).map(f => f.path);
+        // Keep strictly max 5 frames to avoid large payloads to AI and hitting Groq limits
+        const finalFrames = filesWithSize.slice(0, 5).map(f => f.path);
         
-        // Clean up any frames beyond the top 10
-        filesWithSize.slice(10).forEach(f => {
+        // Clean up any frames beyond the top 5
+        filesWithSize.slice(5).forEach(f => {
           if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
         });
         
@@ -205,6 +232,7 @@ async function processVideoBackground(jobId: string, file: any, videoUrl: string
 
   let videoPath = file ? file.path : videoUrl;
   let tempFolder = "";
+  let audioPath = "";
 
   try {
     getGroq(); // Test key
@@ -213,17 +241,42 @@ async function processVideoBackground(jobId: string, file: any, videoUrl: string
     tempFolder = path.join(uploadDir, `frames_${Date.now()}_${jobId}`);
     fs.mkdirSync(tempFolder, { recursive: true });
 
-    const framePaths = await extractFrames(videoPath, tempFolder);
+    audioPath = path.join(uploadDir, `audio_${Date.now()}_${jobId}.mp3`);
+    let detectedSpeech = "";
+
+    // Extract frames and audio in parallel
+    const [framePaths, audioSuccess] = await Promise.all([
+      extractFrames(videoPath, tempFolder),
+      extractAudio(videoPath, audioPath)
+    ]);
+
+    const groq = getGroq();
+
+    if (audioSuccess && fs.existsSync(audioPath)) {
+      try {
+        const audioFile = fs.createReadStream(audioPath);
+        const transcription = await groq.audio.transcriptions.create({
+          file: audioFile as any,
+          model: "whisper-large-v3",
+        });
+        detectedSpeech = transcription.text;
+      } catch (e) {
+        console.warn("Audio transcription failed", e);
+      }
+    }
 
     const base64Frames = framePaths.map((fp) => {
       const data = fs.readFileSync(fp);
       return `data:image/jpeg;base64,${data.toString("base64")}`;
     });
 
-    // Cleanup extracted frames
+    // Cleanup extracted frames and audio
     if (tempFolder && fs.existsSync(tempFolder)) {
       fs.rmSync(tempFolder, { recursive: true, force: true });
       tempFolder = "";
+    }
+    if (fs.existsSync(audioPath)) {
+      fs.unlinkSync(audioPath);
     }
     // Cleanup uploaded video
     if (file && fs.existsSync(file.path)) {
@@ -231,7 +284,6 @@ async function processVideoBackground(jobId: string, file: any, videoUrl: string
     }
 
     job.status = 'analyzing';
-    const groq = getGroq();
     
     // Step 1: Vision Extraction
     const visionMessages: any[] = [
@@ -268,8 +320,9 @@ Perform OCR on all visible text, specifically supporting English, Arabic, French
     // Step 2: Database Search
     const searchTerms = [
       ...(extractedData.extractedText || []),
-      ...(extractedData.logos || [])
-    ].map((t: string) => t.toLowerCase());
+      ...(extractedData.logos || []),
+      detectedSpeech
+    ].map((t: string) => typeof t === 'string' ? t.toLowerCase() : "");
 
     const dbMatches = appsDatabase.filter(app => {
       const appNameLower = app.name.toLowerCase();
@@ -284,8 +337,16 @@ Perform OCR on all visible text, specifically supporting English, Arabic, French
       {
         role: "system",
         content: `You are an expert app identification system.
-Your job is to identify an application based on extracted visual evidence and database matches.
-You must NOT guess blindly. If confidence is low, set success to false.
+Your job is to identify an application based on extracted visual evidence, audio transcriptions, and database matches.
+You may identify apps even if they are not in the database matches, but ONLY if the evidence is undeniable.
+You must NOT guess blindly. 
+Evidence priority:
+1. Exact URL detected in video
+2. Exact application name detected by OCR/audio
+3. Logo match
+4. Interface match
+If confidence is weak, set success to false. Do not return a random similar website.
+
 Return ONLY valid JSON matching this exact schema:
 {
   "success": boolean,
@@ -298,7 +359,7 @@ Return ONLY valid JSON matching this exact schema:
   "storeLinks": { "googlePlay": string | null, "appStore": string | null },
   "usageSteps": string[],
   "pricing": { "model": "Free" | "Paid" | "Freemium" | "Open Source" | "Trial", "limitations": string },
-  "evidence": { "detectedText": string[], "detectedLogos": string[], "uiElements": string[] },
+  "evidence": { "detectedText": string[], "detectedLogos": string[], "uiElements": string[], "detectedSpeech": string },
   "alternatives": [{ "appName": string, "confidence": number }]
 }`
       },
@@ -308,6 +369,7 @@ Return ONLY valid JSON matching this exact schema:
 Extracted Text: ${JSON.stringify(extractedData.extractedText)}
 Logos: ${JSON.stringify(extractedData.logos)}
 UI Elements: ${JSON.stringify(extractedData.uiElements)}
+Detected Speech (Audio): ${detectedSpeech ? JSON.stringify(detectedSpeech) : "None"}
 
 Database Matches found:
 ${JSON.stringify(dbMatches)}
@@ -340,6 +402,9 @@ Based strictly on this evidence, identify the app.`
       }
       if (tempFolder && fs.existsSync(tempFolder)) {
         fs.rmSync(tempFolder, { recursive: true, force: true });
+      }
+      if (audioPath && fs.existsSync(audioPath)) {
+        fs.unlinkSync(audioPath);
       }
     } catch (cleanupErr) {
       console.error("Cleanup Error:", cleanupErr);

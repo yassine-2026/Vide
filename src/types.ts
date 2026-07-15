@@ -35,6 +35,7 @@ export interface AppAnalysisResult {
     detectedText: string[];
     detectedLogos: string[];
     uiElements: string[];
+    detectedSpeech?: string;
   };
   alternatives?: AppAlternative[];
 }

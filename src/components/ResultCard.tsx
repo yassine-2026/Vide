@@ -91,6 +91,12 @@ export function ResultCard({ result, lang, onRetry }: ResultCardProps) {
                 <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">{t.uiElements}:</span>
                 <p className="text-slate-600 dark:text-slate-400">{result.evidence.uiElements.join(', ') || '-'}</p>
               </div>
+              {result.evidence.detectedSpeech && (
+                <div>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">{t.detectedSpeech}:</span>
+                  <p className="text-slate-600 dark:text-slate-400 italic">"{result.evidence.detectedSpeech}"</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

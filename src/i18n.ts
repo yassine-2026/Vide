@@ -18,7 +18,7 @@ export const translations = {
     },
     results: {
       identified: 'Identified Application',
-      notSure: 'Could not identify the application with enough confidence.',
+      notSure: 'Unable to verify the application',
       confidence: 'Confidence',
       type: 'Type',
       platforms: 'Platforms',
@@ -34,6 +34,7 @@ export const translations = {
       detectedText: 'Detected Text',
       detectedLogos: 'Detected Logos',
       uiElements: 'UI Elements',
+      detectedSpeech: 'Detected Speech',
       retryBtn: 'Analyze Another Video'
     },
     platforms: {
@@ -70,7 +71,7 @@ export const translations = {
     },
     results: {
       identified: 'التطبيق المكتشف',
-      notSure: 'تعذر التعرف على التطبيق بدرجة ثقة كافية.',
+      notSure: 'تعذر التحقق من التطبيق',
       confidence: 'نسبة الثقة',
       type: 'النوع',
       platforms: 'المنصات',
@@ -86,6 +87,7 @@ export const translations = {
       detectedText: 'النصوص المستخرجة',
       detectedLogos: 'الشعارات المكتشفة',
       uiElements: 'عناصر الواجهة',
+      detectedSpeech: 'الصوت المستخرج',
       retryBtn: 'تحليل فيديو آخر'
     },
     platforms: {
