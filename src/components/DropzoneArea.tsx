@@ -30,7 +30,7 @@ export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: Dropzo
     maxSize: 100 * 1024 * 1024, // 100MB
     multiple: false,
     disabled: isProcessing
-  });
+  } as any);
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();

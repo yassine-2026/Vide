@@ -30,6 +30,10 @@ export const translations = {
       pricing: 'Pricing Model',
       limitations: 'Limitations / Notes',
       alternatives: 'Top Alternatives',
+      evidence: 'Evidence Found',
+      detectedText: 'Detected Text',
+      detectedLogos: 'Detected Logos',
+      uiElements: 'UI Elements',
       retryBtn: 'Analyze Another Video'
     },
     platforms: {
@@ -78,6 +82,10 @@ export const translations = {
       pricing: 'نموذج التسعير',
       limitations: 'قيود / ملاحظات',
       alternatives: 'أفضل الاحتمالات البديلة',
+      evidence: 'الأدلة المكتشفة',
+      detectedText: 'النصوص المستخرجة',
+      detectedLogos: 'الشعارات المكتشفة',
+      uiElements: 'عناصر الواجهة',
       retryBtn: 'تحليل فيديو آخر'
     },
     platforms: {

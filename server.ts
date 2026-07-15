@@ -7,6 +7,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
+import { appsDatabase } from "./src/data/appsDatabase.js";
 
 dotenv.config();
 
@@ -56,14 +57,36 @@ const extractFrames = (inputPath: string, outputFolder: string): Promise<string[
           .readdirSync(outputFolder)
           .filter((f) => f.endsWith(".jpg"))
           .map((f) => path.join(outputFolder, f));
-        resolve(files);
+        
+        // Remove duplicates by size difference (zero RAM approach)
+        const uniqueFrames: string[] = [];
+        let lastSize = -1;
+        for (const fp of files) {
+          const size = fs.statSync(fp).size;
+          if (lastSize === -1 || Math.abs(size - lastSize) / lastSize > 0.05) {
+            uniqueFrames.push(fp);
+            lastSize = size;
+          } else {
+            fs.unlinkSync(fp); // delete duplicate
+          }
+        }
+        
+        // Keep max 5 frames to avoid large payloads
+        const finalFrames = uniqueFrames.slice(0, 5);
+        
+        // Clean up any frames beyond the top 5
+        uniqueFrames.slice(5).forEach(fp => {
+          if (fs.existsSync(fp)) fs.unlinkSync(fp);
+        });
+        
+        resolve(finalFrames);
       })
       .on("error", (err) => {
         console.error("FFmpeg Error:", err);
         reject(err);
       })
       .screenshots({
-        timestamps: ['20%', '40%', '60%', '80%'], // 4 evenly spaced keyframes
+        timestamps: ['10%', '30%', '50%', '70%', '90%'], // 5 evenly spaced keyframes
         folder: outputFolder,
         size: "854x480", // 480p to save memory
         filename: "frame-%i.jpg",
@@ -97,23 +120,18 @@ app.post("/api/analyze", (req, res, next) => {
   let tempFolder = "";
 
   try {
-    // Ensure Groq is initialized (will throw if key missing)
     getGroq();
 
-    // Setup temp folder for frames
     tempFolder = path.join(uploadDir, `frames_${Date.now()}`);
     fs.mkdirSync(tempFolder, { recursive: true });
 
-    // Extract 4 frames memory-efficiently
     const framePaths = await extractFrames(videoPath, tempFolder);
 
-    // Convert frames to base64
     const base64Frames = framePaths.map((fp) => {
       const data = fs.readFileSync(fp);
       return `data:image/jpeg;base64,${data.toString("base64")}`;
     });
 
-    // Clean up temporary files early to free up disk and RAM
     if (tempFolder && fs.existsSync(tempFolder)) {
       fs.rmSync(tempFolder, { recursive: true, force: true });
       tempFolder = "";
@@ -122,80 +140,111 @@ app.post("/api/analyze", (req, res, next) => {
       fs.unlinkSync(file.path);
     }
 
-    // Prepare Groq Request
-    const messages: any[] = [
+    const groq = getGroq();
+    
+    // Step 1: Vision Extraction
+    const visionMessages: any[] = [
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: `You are an expert app and website identifier with advanced OCR capabilities. 
-I am providing you with 4 frames extracted from a video showing a user interacting with an app or website.
-Analyze all visual text (using OCR), logos, icons, colors, UI layout, and overall design.
-Identify the application or website.
-
-Respond ONLY with a valid JSON object matching this exact schema:
+            text: `Extract visual information from these application/website screenshots.
+Analyze carefully and return ONLY a JSON object matching this schema:
 {
-  "success": boolean, // false if confidence < 70
-  "confidence": number, // 0-100
-  "appName": string,
-  "description": string, // brief description of what the app does
-  "type": string, // e.g. "Social Media", "Productivity", "IDE"
-  "platforms": {
-    "website": boolean,
-    "android": boolean,
-    "iphone": boolean,
-    "windows": boolean,
-    "mac": boolean,
-    "linux": boolean
-  },
-  "officialLink": string | null,
-  "storeLinks": {
-    "googlePlay": string | null,
-    "appStore": string | null
-  },
-  "usageSteps": string[], // Step-by-step of what the user is doing in the video (e.g. "1. Open app", "2. Click upload")
-  "pricing": {
-    "model": "Free" | "Paid" | "Freemium" | "Open Source" | "Trial",
-    "limitations": string // Short explanation of limits
-  },
-  "alternatives": [
-    { "appName": string, "confidence": number } // Provide top 3-5 if confidence < 70
-  ]
-}`,
+  "extractedText": ["word1", "phrase2", ...],
+  "logos": ["logo description 1", ...],
+  "uiElements": ["sidebar", "navbar", "settings icon", ...]
+}
+Include any recognizable words, brands, menus, or distinct UI layouts.`
           },
-          ...base64Frames.map((url) => ({
-            type: "image_url",
-            image_url: { url },
-          })),
+          ...base64Frames.map((url) => ({ type: "image_url", image_url: { url } })),
         ],
       },
     ];
 
-    const groq = getGroq();
-    const completion = await groq.chat.completions.create({
+    const visionCompletion = await groq.chat.completions.create({
       model: process.env.GROQ_VISION_MODEL || "llama-3.2-90b-vision-preview",
-      messages,
+      messages: visionMessages,
       temperature: 0.1,
+      response_format: { type: "json_object" }
     });
 
-    const content = completion.choices[0]?.message?.content || "";
-    
-    // Attempt to extract JSON from response
-    let jsonStr = content;
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[1];
+    const visionContent = visionCompletion.choices[0]?.message?.content || "{}";
+    const extractedData = JSON.parse(visionContent);
+
+    // Step 2: Database Search
+    const searchTerms = [
+      ...(extractedData.extractedText || []),
+      ...(extractedData.logos || [])
+    ].map((t: string) => t.toLowerCase());
+
+    const dbMatches = appsDatabase.filter(app => {
+      const appNameLower = app.name.toLowerCase();
+      if (searchTerms.some(term => term.includes(appNameLower) || appNameLower.includes(term))) {
+        return true;
+      }
+      return app.keywords.some(kw => searchTerms.some(term => term.includes(kw)));
+    });
+
+    // Step 3: Reasoning
+    const reasoningMessages: any[] = [
+      {
+        role: "system",
+        content: `You are an expert app identification system.
+Your job is to identify an application based on extracted visual evidence and database matches.
+You must NOT guess blindly. If confidence is low, set success to false.
+Return ONLY valid JSON matching this exact schema:
+{
+  "success": boolean,
+  "confidence": number, // 0-100
+  "appName": string,
+  "description": string,
+  "type": string,
+  "platforms": { "website": boolean, "android": boolean, "iphone": boolean, "windows": boolean, "mac": boolean, "linux": boolean },
+  "officialLink": string | null,
+  "storeLinks": { "googlePlay": string | null, "appStore": string | null },
+  "usageSteps": string[],
+  "pricing": { "model": "Free" | "Paid" | "Freemium" | "Open Source" | "Trial", "limitations": string },
+  "evidence": { "detectedText": string[], "detectedLogos": string[], "uiElements": string[] },
+  "alternatives": [{ "appName": string, "confidence": number }]
+}`
+      },
+      {
+        role: "user",
+        content: `Evidence from video frames:
+Extracted Text: ${JSON.stringify(extractedData.extractedText)}
+Logos: ${JSON.stringify(extractedData.logos)}
+UI Elements: ${JSON.stringify(extractedData.uiElements)}
+
+Database Matches found:
+${JSON.stringify(dbMatches)}
+
+Based strictly on this evidence, identify the app.`
+      }
+    ];
+
+    const reasoningCompletion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: reasoningMessages,
+      temperature: 0.1,
+      response_format: { type: "json_object" }
+    });
+
+    const finalContent = reasoningCompletion.choices[0]?.message?.content || "{}";
+    const result = JSON.parse(finalContent);
+
+    // Fallback message handling if needed by frontend
+    if (!result.success) {
+       // Just return the result, frontend handles success: false
     }
 
-    const result = JSON.parse(jsonStr);
     res.json({ result });
 
   } catch (error: any) {
     console.error("Analysis Error:", error);
     res.status(500).json({ error: error.message || "Failed to analyze video." });
   } finally {
-    // Cleanup
     if (file && fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
     }

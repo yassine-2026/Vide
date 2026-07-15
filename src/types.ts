@@ -31,6 +31,11 @@ export interface AppAnalysisResult {
     model: AppPricingModel;
     limitations: string;
   };
+  evidence?: {
+    detectedText: string[];
+    detectedLogos: string[];
+    uiElements: string[];
+  };
   alternatives?: AppAlternative[];
 }
 

@@ -71,6 +71,31 @@ export function ResultCard({ result, lang, onRetry }: ResultCardProps) {
         </div>
       </div>
 
+      {result.evidence && (
+        <div className="p-8 pb-0">
+          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-5 border border-slate-100 dark:border-slate-800">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              {t.evidence}
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">{t.detectedText}:</span>
+                <p className="text-slate-600 dark:text-slate-400">{result.evidence.detectedText.join(', ') || '-'}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">{t.detectedLogos}:</span>
+                <p className="text-slate-600 dark:text-slate-400">{result.evidence.detectedLogos.join(', ') || '-'}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">{t.uiElements}:</span>
+                <p className="text-slate-600 dark:text-slate-400">{result.evidence.uiElements.join(', ') || '-'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
         
         {/* Left Column */}
