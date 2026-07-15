@@ -5,6 +5,7 @@ import multer from "multer";
 import fs from "fs";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
 import { appsDatabase } from "./src/data/appsDatabase.js";
@@ -14,6 +15,9 @@ dotenv.config();
 
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic);
+}
+if (ffprobeStatic && ffprobeStatic.path) {
+  ffmpeg.setFfprobePath(ffprobeStatic.path);
 }
 
 const app = express();
@@ -72,21 +76,49 @@ setInterval(() => {
   }
 }, 600000);
 
+// Helper: Get video metadata
+const getVideoMetadata = (inputPath: string): Promise<ffmpeg.FfprobeData> => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) reject(err);
+      else resolve(metadata);
+    });
+  });
+};
+
 // Helper: Extract frames from video in a memory-efficient way
-const extractFrames = (inputPath: string, outputFolder: string): Promise<string[]> => {
+const extractFrames = async (inputPath: string, outputFolder: string): Promise<string[]> => {
+  let duration = 0;
+  try {
+    const metadata = await getVideoMetadata(inputPath);
+    duration = parseFloat(metadata.format.duration as string) || 0;
+  } catch (err) {
+    console.warn("Could not get metadata, assuming short video.", err);
+    duration = 60; // fallback
+  }
+
+  if (duration > 1800) {
+    throw new Error("Video is too long. Maximum 30 minutes supported.");
+  }
+
+  // We want maximum 30 frames extracted from the video.
+  // We'll calculate the fps needed.
+  let targetFrames = 30;
+  let fps = targetFrames / Math.max(duration, 1);
+  if (fps > 1) fps = 1; // max 1 frame per second
+
   return new Promise((resolve, reject) => {
     let cmd = ffmpeg(inputPath);
     let timeoutId = setTimeout(() => {
       try { cmd.kill('SIGKILL'); } catch (e) {}
-      reject(new Error("FFmpeg extraction timed out. Please try a shorter video."));
-    }, 60000);
+      reject(new Error("FFmpeg extraction timed out."));
+    }, 120000); // 2 minutes max for extraction
 
     cmd
       .outputOptions([
-        '-ss 0', // Start at beginning
-        '-t 60', // Limit to 60 seconds max
         '-threads 1', // Limit CPU and RAM usage for free tier
         '-preset ultrafast', // Faster extraction
+        `-vf`, `fps=${fps},scale='min(1280,iw)':-2`, // max 1280px width to save memory
         '-q:v 5' // Lower quality to save memory in Node and Groq API
       ])
       .on("end", () => {
@@ -96,25 +128,19 @@ const extractFrames = (inputPath: string, outputFolder: string): Promise<string[
           .filter((f) => f.endsWith(".jpg"))
           .map((f) => path.join(outputFolder, f));
         
-        // Remove duplicates by size difference (zero RAM approach)
-        const uniqueFrames: string[] = [];
-        let lastSize = -1;
-        for (const fp of files) {
-          const size = fs.statSync(fp).size;
-          if (lastSize === -1 || Math.abs(size - lastSize) / lastSize > 0.05) {
-            uniqueFrames.push(fp);
-            lastSize = size;
-          } else {
-            fs.unlinkSync(fp); // delete duplicate
-          }
-        }
+        // Sort files by size to find frames with most details (text, UI)
+        const filesWithSize = files.map(fp => {
+          return { path: fp, size: fs.statSync(fp).size };
+        });
         
-        // Keep max 5 frames to avoid large payloads
-        const finalFrames = uniqueFrames.slice(0, 5);
+        filesWithSize.sort((a, b) => b.size - a.size);
         
-        // Clean up any frames beyond the top 5
-        uniqueFrames.slice(5).forEach(fp => {
-          if (fs.existsSync(fp)) fs.unlinkSync(fp);
+        // Keep max 10 frames to avoid large payloads to AI
+        const finalFrames = filesWithSize.slice(0, 10).map(f => f.path);
+        
+        // Clean up any frames beyond the top 10
+        filesWithSize.slice(10).forEach(f => {
+          if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
         });
         
         resolve(finalFrames);
@@ -124,12 +150,7 @@ const extractFrames = (inputPath: string, outputFolder: string): Promise<string[
         console.error("FFmpeg Error:", err);
         reject(err);
       })
-      .screenshots({
-        timestamps: ['10%', '30%', '50%', '70%', '90%'], // 5 evenly spaced keyframes
-        folder: outputFolder,
-        size: "854x480", // 480p to save memory
-        filename: "frame-%i.jpg",
-      });
+      .save(path.join(outputFolder, "frame-%03d.jpg"));
   });
 };
 
