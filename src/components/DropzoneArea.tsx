@@ -27,7 +27,7 @@ export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: Dropzo
       'video/mp4': ['.mp4'],
       'video/webm': ['.webm']
     },
-    maxSize: 50 * 1024 * 1024, // 50MB
+    maxSize: 100 * 1024 * 1024, // 100MB
     multiple: false,
     disabled: isProcessing
   });

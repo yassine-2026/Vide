@@ -27,7 +27,7 @@ if (!fs.existsSync(uploadDir)) {
 
 const upload = multer({
   dest: uploadDir,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit to fit in Render Free
 });
 
 let groqClient: Groq | null = null;
@@ -42,10 +42,15 @@ const getGroq = () => {
   return groqClient;
 };
 
-// Helper: Extract frames from video
-const extractFrames = (inputPath: string, outputFolder: string, count: number = 3): Promise<string[]> => {
+// Helper: Extract frames from video in a memory-efficient way
+const extractFrames = (inputPath: string, outputFolder: string): Promise<string[]> => {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
+      .outputOptions([
+        '-threads 1', // Limit CPU and RAM usage for free tier
+        '-preset ultrafast', // Faster extraction
+        '-q:v 5' // Lower quality to save memory in Node and Groq API
+      ])
       .on("end", () => {
         const files = fs
           .readdirSync(outputFolder)
@@ -58,15 +63,29 @@ const extractFrames = (inputPath: string, outputFolder: string, count: number = 
         reject(err);
       })
       .screenshots({
-        count,
+        timestamps: ['20%', '40%', '60%', '80%'], // 4 evenly spaced keyframes
         folder: outputFolder,
-        size: "1280x720",
+        size: "854x480", // 480p to save memory
         filename: "frame-%i.jpg",
       });
   });
 };
 
-app.post("/api/analyze", upload.single("video"), async (req, res) => {
+const uploadMiddleware = upload.single("video");
+
+app.post("/api/analyze", (req, res, next) => {
+  uploadMiddleware(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: "File exceeds the 100MB limit." });
+      }
+      return res.status(400).json({ error: err.message });
+    } else if (err) {
+      return res.status(500).json({ error: "Failed to process upload." });
+    }
+    next();
+  });
+}, async (req, res) => {
   const videoUrl = req.body.url;
   const file = req.file;
 
@@ -85,14 +104,23 @@ app.post("/api/analyze", upload.single("video"), async (req, res) => {
     tempFolder = path.join(uploadDir, `frames_${Date.now()}`);
     fs.mkdirSync(tempFolder, { recursive: true });
 
-    // Extract 3 frames
-    const framePaths = await extractFrames(videoPath, tempFolder, 3);
+    // Extract 4 frames memory-efficiently
+    const framePaths = await extractFrames(videoPath, tempFolder);
 
     // Convert frames to base64
     const base64Frames = framePaths.map((fp) => {
       const data = fs.readFileSync(fp);
       return `data:image/jpeg;base64,${data.toString("base64")}`;
     });
+
+    // Clean up temporary files early to free up disk and RAM
+    if (tempFolder && fs.existsSync(tempFolder)) {
+      fs.rmSync(tempFolder, { recursive: true, force: true });
+      tempFolder = "";
+    }
+    if (file && fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
 
     // Prepare Groq Request
     const messages: any[] = [
@@ -102,7 +130,7 @@ app.post("/api/analyze", upload.single("video"), async (req, res) => {
           {
             type: "text",
             text: `You are an expert app and website identifier with advanced OCR capabilities. 
-I am providing you with 3 frames extracted from a video showing a user interacting with an app or website.
+I am providing you with 4 frames extracted from a video showing a user interacting with an app or website.
 Analyze all visual text (using OCR), logos, icons, colors, UI layout, and overall design.
 Identify the application or website.
 

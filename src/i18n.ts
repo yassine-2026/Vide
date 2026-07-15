@@ -8,7 +8,7 @@ export const translations = {
       analyzeBtn: 'Analyze Video',
       analyzingBtn: 'Analyzing...',
       cancelBtn: 'Cancel',
-      supported: 'Supported formats: MP4, WebM (Max 50MB)'
+      supported: 'Supported formats: MP4, WebM (Max 100MB)'
     },
     progress: {
       uploading: 'Uploading video...',
@@ -42,7 +42,7 @@ export const translations = {
     },
     errors: {
       noInput: 'Please provide a video file or URL.',
-      fileTooLarge: 'File exceeds the 50MB limit.',
+      fileTooLarge: 'File exceeds the 100MB limit.',
       serverError: 'An error occurred during analysis.',
       groqKeyMissing: 'GROQ_API_KEY is not configured on the server.'
     }
@@ -56,7 +56,7 @@ export const translations = {
       analyzeBtn: 'تحليل الفيديو',
       analyzingBtn: 'جاري التحليل...',
       cancelBtn: 'إلغاء',
-      supported: 'الصيغ المدعومة: MP4, WebM (الحد الأقصى 50MB)'
+      supported: 'الصيغ المدعومة: MP4, WebM (الحد الأقصى 100MB)'
     },
     progress: {
       uploading: 'جاري رفع الفيديو...',
@@ -90,7 +90,7 @@ export const translations = {
     },
     errors: {
       noInput: 'يرجى تقديم ملف فيديو أو رابط.',
-      fileTooLarge: 'حجم الملف يتجاوز الحد الأقصى (50 ميجابايت).',
+      fileTooLarge: 'حجم الملف يتجاوز الحد الأقصى (100 ميجابايت).',
       serverError: 'حدث خطأ أثناء التحليل.',
       groqKeyMissing: 'مفتاح GROQ_API_KEY غير معد على الخادم.'
     }
