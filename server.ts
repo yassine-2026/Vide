@@ -8,6 +8,7 @@ import ffmpegStatic from "ffmpeg-static";
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
 import { appsDatabase } from "./src/data/appsDatabase.js";
+import { v4 as uuidv4 } from "uuid";
 
 dotenv.config();
 
@@ -51,15 +52,39 @@ const getGroq = () => {
   return groqClient;
 };
 
+interface Job {
+  id: string;
+  status: 'uploading' | 'extracting' | 'analyzing' | 'completed' | 'failed';
+  result?: any;
+  error?: string;
+  createdAt: number;
+}
+
+const jobs = new Map<string, Job>();
+
+// Job cleanup interval (1 hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of jobs.entries()) {
+    if (now - job.createdAt > 3600000) {
+      jobs.delete(id);
+    }
+  }
+}, 600000);
+
 // Helper: Extract frames from video in a memory-efficient way
 const extractFrames = (inputPath: string, outputFolder: string): Promise<string[]> => {
   return new Promise((resolve, reject) => {
+    let cmd = ffmpeg(inputPath);
     let timeoutId = setTimeout(() => {
-      reject(new Error("FFmpeg extraction timed out."));
+      try { cmd.kill('SIGKILL'); } catch (e) {}
+      reject(new Error("FFmpeg extraction timed out. Please try a shorter video."));
     }, 60000);
 
-    ffmpeg(inputPath)
+    cmd
       .outputOptions([
+        '-ss 0', // Start at beginning
+        '-t 60', // Limit to 60 seconds max
         '-threads 1', // Limit CPU and RAM usage for free tier
         '-preset ultrafast', // Faster extraction
         '-q:v 5' // Lower quality to save memory in Node and Groq API
@@ -130,13 +155,41 @@ app.post("/api/analyze", (req, res, next) => {
     return res.status(400).json({ success: false, error: "Please provide a video file or URL." });
   }
 
+  const jobId = uuidv4();
+  const job: Job = {
+    id: jobId,
+    status: 'uploading', // We'll switch to extracting soon
+    createdAt: Date.now()
+  };
+  jobs.set(jobId, job);
+
+  // Return immediately
+  res.json({ success: true, jobId });
+
+  // Process asynchronously
+  processVideoBackground(jobId, file, videoUrl);
+});
+
+app.get("/api/job/:jobId", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: "Job not found" });
+  }
+  res.json({ success: true, job });
+});
+
+async function processVideoBackground(jobId: string, file: any, videoUrl: string) {
+  const job = jobs.get(jobId);
+  if (!job) return;
+
   let videoPath = file ? file.path : videoUrl;
   let tempFolder = "";
 
   try {
-    getGroq();
+    getGroq(); // Test key
 
-    tempFolder = path.join(uploadDir, `frames_${Date.now()}`);
+    job.status = 'extracting';
+    tempFolder = path.join(uploadDir, `frames_${Date.now()}_${jobId}`);
     fs.mkdirSync(tempFolder, { recursive: true });
 
     const framePaths = await extractFrames(videoPath, tempFolder);
@@ -146,14 +199,17 @@ app.post("/api/analyze", (req, res, next) => {
       return `data:image/jpeg;base64,${data.toString("base64")}`;
     });
 
+    // Cleanup extracted frames
     if (tempFolder && fs.existsSync(tempFolder)) {
       fs.rmSync(tempFolder, { recursive: true, force: true });
       tempFolder = "";
     }
+    // Cleanup uploaded video
     if (file && fs.existsSync(file.path)) {
       fs.unlinkSync(file.path);
     }
 
+    job.status = 'analyzing';
     const groq = getGroq();
     
     // Step 1: Vision Extraction
@@ -249,16 +305,13 @@ Based strictly on this evidence, identify the app.`
     const finalContent = reasoningCompletion.choices[0]?.message?.content || "{}";
     const result = JSON.parse(finalContent);
 
-    // Fallback message handling if needed by frontend
-    if (!result.success) {
-       // Just return the result, frontend handles success: false
-    }
-
-    res.json({ success: true, result });
+    job.status = 'completed';
+    job.result = result;
 
   } catch (error: any) {
-    console.error("Analysis Error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to analyze video." });
+    console.error("Background Analysis Error:", error);
+    job.status = 'failed';
+    job.error = error.message || "Failed to analyze video.";
   } finally {
     try {
       if (file && fs.existsSync(file.path)) {
@@ -271,7 +324,7 @@ Based strictly on this evidence, identify the app.`
       console.error("Cleanup Error:", cleanupErr);
     }
   }
-});
+}
 
 // Catch-all error handler for API routes
 app.use("/api/*", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -3,13 +3,14 @@ import { Moon, Sun, Languages } from 'lucide-react';
 import { DropzoneArea } from './components/DropzoneArea';
 import { ResultCard } from './components/ResultCard';
 import { Language, translations } from './i18n';
-import { AnalyzeResponse, AppAnalysisResult } from './types';
+import { AnalyzeResponse, AppAnalysisResult, JobResponse, JobStatus } from './types';
 
 export default function App() {
   const [lang, setLang] = useState<Language>('en');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   
   const [isProcessing, setIsProcessing] = useState(false);
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [result, setResult] = useState<AppAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -28,17 +29,51 @@ export default function App() {
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
   const toggleLang = () => setLang(prev => prev === 'en' ? 'ar' : 'en');
 
+  const pollJob = async (jobId: string, controller: AbortController) => {
+    while (!controller.signal.aborted) {
+      try {
+        const response = await fetch(`/api/job/${jobId}`, {
+          signal: controller.signal
+        });
+        const data: JobResponse = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || translations[lang].errors.serverError);
+        }
+
+        if (data.job) {
+          setJobStatus(data.job.status);
+          if (data.job.status === 'completed') {
+            if (data.job.result) {
+              setResult(data.job.result);
+            } else {
+              throw new Error(translations[lang].errors.serverError);
+            }
+            break;
+          } else if (data.job.status === 'failed') {
+            throw new Error(data.job.error || translations[lang].errors.serverError);
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          throw err;
+        }
+        break;
+      }
+      
+      // Wait 2 seconds before polling again
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  };
+
   const handleAnalyze = async (file: File | null, url: string) => {
     setError(null);
     setResult(null);
     setIsProcessing(true);
+    setJobStatus('uploading');
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
-
-    const timeoutId = setTimeout(() => {
-      abortController.abort(new Error("Request timed out. The video took too long to process."));
-    }, 90000);
 
     const formData = new FormData();
     if (file) {
@@ -54,8 +89,6 @@ export default function App() {
         signal: abortController.signal
       });
 
-      clearTimeout(timeoutId);
-
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         const text = await response.text();
@@ -65,15 +98,13 @@ export default function App() {
 
       const data: AnalyzeResponse = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || !data.success || !data.jobId) {
         throw new Error(data.error || translations[lang].errors.serverError);
       }
 
-      if (data.result) {
-        setResult(data.result);
-      } else {
-        throw new Error(translations[lang].errors.serverError);
-      }
+      // Start polling
+      await pollJob(data.jobId, abortController);
+      
     } catch (err: any) {
       if (err.name === 'AbortError') {
         console.log('Analysis cancelled');
@@ -82,6 +113,7 @@ export default function App() {
       }
     } finally {
       setIsProcessing(false);
+      setJobStatus(null);
     }
   };
 
@@ -89,6 +121,7 @@ export default function App() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setIsProcessing(false);
+      setJobStatus(null);
     }
   };
 
@@ -149,6 +182,7 @@ export default function App() {
               lang={lang} 
               onAnalyze={handleAnalyze} 
               isProcessing={isProcessing} 
+              jobStatus={jobStatus}
               onCancel={handleCancel}
             />
 

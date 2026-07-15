@@ -39,7 +39,24 @@ export interface AppAnalysisResult {
   alternatives?: AppAlternative[];
 }
 
-export interface AnalyzeResponse {
+export type JobStatus = 'uploading' | 'extracting' | 'analyzing' | 'completed' | 'failed';
+
+export interface Job {
+  id: string;
+  status: JobStatus;
   result?: AppAnalysisResult;
+  error?: string;
+  createdAt: number;
+}
+
+export interface AnalyzeResponse {
+  success: boolean;
+  jobId?: string;
+  error?: string;
+}
+
+export interface JobResponse {
+  success: boolean;
+  job?: Job;
   error?: string;
 }

@@ -3,16 +3,19 @@ import { useDropzone } from 'react-dropzone';
 import { UploadCloud, Link as LinkIcon, Loader2, XCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { translations, Language } from '../i18n';
+import { JobStatus } from '../types';
 
 interface DropzoneProps {
   lang: Language;
   onAnalyze: (file: File | null, url: string) => void;
   isProcessing: boolean;
+  jobStatus?: JobStatus | null;
   onCancel: () => void;
 }
 
-export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: DropzoneProps) {
+export function DropzoneArea({ lang, onAnalyze, isProcessing, jobStatus, onCancel }: DropzoneProps) {
   const t = translations[lang].dropzone;
+  const p = translations[lang].progress;
   const [url, setUrl] = useState('');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -38,6 +41,11 @@ export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: Dropzo
     if (url.trim() && !isProcessing) {
       onAnalyze(null, url.trim());
     }
+  };
+
+  const getStatusText = () => {
+    if (!jobStatus) return t.analyzingBtn;
+    return p[jobStatus as keyof typeof p] || t.analyzingBtn;
   };
 
   return (
@@ -110,7 +118,7 @@ export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: Dropzo
       {isProcessing && (
         <div className="flex items-center justify-center gap-3 text-blue-600 dark:text-blue-400 mt-4 bg-blue-50 dark:bg-blue-900/20 py-4 px-6 rounded-lg animate-pulse">
           <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="font-medium">{translations[lang].progress.analyzing}</span>
+          <span className="font-medium">{getStatusText()}</span>
         </div>
       )}
     </div>
