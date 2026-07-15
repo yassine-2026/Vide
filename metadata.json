@@ -1,0 +1,8 @@
+{
+  "name": "Video App Finder",
+  "description": "Analyze videos to identify apps, websites, and their features using Groq API and Vision.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
