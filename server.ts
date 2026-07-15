@@ -26,6 +26,14 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+// Global error handler for JSON parsing and other middleware errors
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ success: false, error: "Invalid JSON payload" });
+  }
+  next(err);
+});
+
 const upload = multer({
   dest: uploadDir,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit to fit in Render Free
@@ -46,6 +54,10 @@ const getGroq = () => {
 // Helper: Extract frames from video in a memory-efficient way
 const extractFrames = (inputPath: string, outputFolder: string): Promise<string[]> => {
   return new Promise((resolve, reject) => {
+    let timeoutId = setTimeout(() => {
+      reject(new Error("FFmpeg extraction timed out."));
+    }, 60000);
+
     ffmpeg(inputPath)
       .outputOptions([
         '-threads 1', // Limit CPU and RAM usage for free tier
@@ -53,6 +65,7 @@ const extractFrames = (inputPath: string, outputFolder: string): Promise<string[
         '-q:v 5' // Lower quality to save memory in Node and Groq API
       ])
       .on("end", () => {
+        clearTimeout(timeoutId);
         const files = fs
           .readdirSync(outputFolder)
           .filter((f) => f.endsWith(".jpg"))
@@ -82,6 +95,7 @@ const extractFrames = (inputPath: string, outputFolder: string): Promise<string[
         resolve(finalFrames);
       })
       .on("error", (err) => {
+        clearTimeout(timeoutId);
         console.error("FFmpeg Error:", err);
         reject(err);
       })
@@ -100,11 +114,11 @@ app.post("/api/analyze", (req, res, next) => {
   uploadMiddleware(req, res, (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: "File exceeds the 100MB limit." });
+        return res.status(400).json({ success: false, error: "File exceeds the 100MB limit." });
       }
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({ success: false, error: err.message });
     } else if (err) {
-      return res.status(500).json({ error: "Failed to process upload." });
+      return res.status(500).json({ success: false, error: "Failed to process upload." });
     }
     next();
   });
@@ -113,7 +127,7 @@ app.post("/api/analyze", (req, res, next) => {
   const file = req.file;
 
   if (!videoUrl && !file) {
-    return res.status(400).json({ error: "Please provide a video file or URL." });
+    return res.status(400).json({ success: false, error: "Please provide a video file or URL." });
   }
 
   let videoPath = file ? file.path : videoUrl;
@@ -240,19 +254,29 @@ Based strictly on this evidence, identify the app.`
        // Just return the result, frontend handles success: false
     }
 
-    res.json({ result });
+    res.json({ success: true, result });
 
   } catch (error: any) {
     console.error("Analysis Error:", error);
-    res.status(500).json({ error: error.message || "Failed to analyze video." });
+    res.status(500).json({ success: false, error: error.message || "Failed to analyze video." });
   } finally {
-    if (file && fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-    if (tempFolder && fs.existsSync(tempFolder)) {
-      fs.rmSync(tempFolder, { recursive: true, force: true });
+    try {
+      if (file && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+      if (tempFolder && fs.existsSync(tempFolder)) {
+        fs.rmSync(tempFolder, { recursive: true, force: true });
+      }
+    } catch (cleanupErr) {
+      console.error("Cleanup Error:", cleanupErr);
     }
   }
+});
+
+// Catch-all error handler for API routes
+app.use("/api/*", (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Unhandled API Error:", err);
+  res.status(500).json({ success: false, error: "Internal server error." });
 });
 
 async function startServer() {

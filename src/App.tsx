@@ -36,6 +36,10 @@ export default function App() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
+    const timeoutId = setTimeout(() => {
+      abortController.abort(new Error("Request timed out. The video took too long to process."));
+    }, 90000);
+
     const formData = new FormData();
     if (file) {
       formData.append('video', file);
@@ -49,6 +53,15 @@ export default function App() {
         body: formData,
         signal: abortController.signal
       });
+
+      clearTimeout(timeoutId);
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+        throw new Error(translations[lang].errors.serverError + ` (Status: ${response.status})`);
+      }
 
       const data: AnalyzeResponse = await response.json();
 
