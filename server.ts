@@ -174,7 +174,7 @@ Respond ONLY with a valid JSON object matching this exact schema:
 
     const groq = getGroq();
     const completion = await groq.chat.completions.create({
-      model: "llama-3.2-11b-vision-preview",
+      model: process.env.GROQ_VISION_MODEL || "llama-3.2-90b-vision-preview",
       messages,
       temperature: 0.1,
     });
