@@ -1,4 +1,4 @@
-export type AppPricingModel = 'Free' | 'Paid' | 'Freemium' | 'Open Source' | 'Trial';
+export type AppPricingModel = 'Free' | 'Paid' | 'Freemium' | 'Open Source' | 'Trial' | 'Unknown';
 
 export interface AppPlatforms {
   website: boolean;
@@ -31,6 +31,10 @@ export interface AppAnalysisResult {
     model: AppPricingModel;
     limitations: string;
   };
+  requirements?: {
+    accountNeeded: boolean | "Unknown";
+  };
+  failureReason?: string;
   evidence?: {
     detectedText: string[];
     detectedLogos: string[];

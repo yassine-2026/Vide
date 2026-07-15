@@ -22,6 +22,19 @@ export function ResultCard({ result, lang, onRetry }: ResultCardProps) {
           <XCircle className="w-16 h-16 text-amber-500" />
           <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{t.notSure}</h2>
           
+          {result.failureReason && (
+            <p className="mt-4 text-slate-700 dark:text-slate-300 bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg border border-amber-200 dark:border-amber-800/50">
+              {result.failureReason}
+            </p>
+          )}
+
+          {result.officialLink && (
+            <div className="mt-4 text-slate-600 dark:text-slate-400">
+              <span className="font-medium">{t.detectedUrl}</span> <a href={result.officialLink} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline" style={{ direction: "ltr", display: "inline-block" }}>{result.officialLink}</a>
+              <p className="mt-1 text-sm">{t.unverifiedMoreInfo}</p>
+            </div>
+          )}
+
           {result.alternatives && result.alternatives.length > 0 && (
             <div className="w-full mt-6 bg-slate-50 dark:bg-slate-900/50 rounded-xl p-6 text-start">
               <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-200 mb-4">{t.alternatives}</h3>
@@ -173,10 +186,21 @@ export function ResultCard({ result, lang, onRetry }: ResultCardProps) {
               <div className="flex items-center gap-2 mb-2">
                 <span className="font-semibold text-amber-900 dark:text-amber-200 text-lg">{result.pricing.model}</span>
               </div>
-              <p className="text-amber-800 dark:text-amber-400/80 text-sm">
+              <p className="text-amber-800 dark:text-amber-400/80 text-sm mb-4">
                 <span className="font-medium mr-1">{t.limitations}:</span>
                 {result.pricing.limitations}
               </p>
+              {result.requirements && (
+                <>
+                  <div className="h-px w-full bg-amber-200/50 dark:bg-amber-800/30 my-3"></div>
+                  <div className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200 font-medium">
+                    <span className="font-semibold mr-1">{t.requirements}:</span>
+                    {result.requirements.accountNeeded === true && <span className="bg-amber-200 dark:bg-amber-800/50 px-2 py-0.5 rounded">{t.accountRequired}</span>}
+                    {result.requirements.accountNeeded === false && <span className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 px-2 py-0.5 rounded">{t.accountNotRequired}</span>}
+                    {result.requirements.accountNeeded === "Unknown" && <span className="bg-slate-200 dark:bg-slate-700/50 px-2 py-0.5 rounded">{t.accountUnknown}</span>}
+                  </div>
+                </>
+              )}
             </div>
           </section>
         </div>

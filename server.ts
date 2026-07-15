@@ -113,6 +113,42 @@ const extractAudio = (inputPath: string, outputPath: string): Promise<boolean> =
   });
 };
 
+// Helper: Fetch URL Metadata
+const fetchUrlMetadata = async (url: string): Promise<{ url: string, title: string, description: string } | null> => {
+  try {
+    if (!url.startsWith('http')) url = 'https://' + url;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch(url, { 
+      signal: controller.signal, 
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0' } 
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) return null;
+    
+    // Read only the first 50kb to save memory/time
+    let data = '';
+    const buffer = await response.arrayBuffer();
+    data = new TextDecoder().decode(buffer.slice(0, 50000));
+
+    const titleMatch = data.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descMatch = data.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i) || 
+                      data.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/i) ||
+                      data.match(/<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/i);
+    
+    if (titleMatch || descMatch) {
+      return {
+        url,
+        title: titleMatch ? titleMatch[1].trim() : "Unknown",
+        description: descMatch ? descMatch[1].trim() : "Unknown"
+      };
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+};
+
 // Helper: Extract frames from video in a memory-efficient way
 const extractFrames = async (inputPath: string, outputFolder: string): Promise<string[]> => {
   let duration = 0;
@@ -295,12 +331,16 @@ async function processVideoBackground(jobId: string, file: any, videoUrl: string
             text: `Extract visual information from these application/website screenshots.
 Analyze carefully and return ONLY a JSON object matching this schema:
 {
+  "extractedUrls": ["url1", "url2", ...],
   "extractedText": ["word1", "phrase2", ...],
   "logos": ["logo description 1", ...],
   "uiElements": ["sidebar", "navbar", "settings icon", ...]
 }
-Include any recognizable words, brands, menus, or distinct UI layouts.
-Perform OCR on all visible text, specifically supporting English, Arabic, French, and other languages.`
+IMPORTANT:
+- Look very closely at the browser address bar for any URLs.
+- Look for URLs in watermarks, text, or captions.
+- Extract any recognizable words, brands, menus, or distinct UI layouts.
+- Perform OCR on all visible text, specifically supporting English, Arabic, French, and other languages.`
           },
           ...base64Frames.map((url) => ({ type: "image_url", image_url: { url } })),
         ],
@@ -319,6 +359,7 @@ Perform OCR on all visible text, specifically supporting English, Arabic, French
 
     // Step 2: Database Search
     const searchTerms = [
+      ...(extractedData.extractedUrls || []),
       ...(extractedData.extractedText || []),
       ...(extractedData.logos || []),
       detectedSpeech
@@ -332,6 +373,17 @@ Perform OCR on all visible text, specifically supporting English, Arabic, French
       return app.keywords.some(kw => searchTerms.some(term => term.includes(kw)));
     });
 
+    // Fetch URL Metadata for extracted URLs
+    const metadataResults = [];
+    if (extractedData.extractedUrls && Array.isArray(extractedData.extractedUrls)) {
+      for (const u of extractedData.extractedUrls.slice(0, 3)) { // Max 3 to save time
+         if (u && u.length > 4 && u.includes('.')) {
+            const meta = await fetchUrlMetadata(u);
+            if (meta) metadataResults.push(meta);
+         }
+      }
+    }
+
     // Step 3: Reasoning
     const reasoningMessages: any[] = [
       {
@@ -339,26 +391,33 @@ Perform OCR on all visible text, specifically supporting English, Arabic, French
         content: `You are an expert app identification system.
 Your job is to identify an application based on extracted visual evidence, audio transcriptions, and database matches.
 You may identify apps even if they are not in the database matches, but ONLY if the evidence is undeniable.
-You must NOT guess blindly. 
-Evidence priority:
-1. Exact URL detected in video
-2. Exact application name detected by OCR/audio
-3. Logo match
-4. Interface match
-If confidence is weak, set success to false. Do not return a random similar website.
+
+CRITICAL RULES:
+1. URL PRIORITY: If a URL appears anywhere in the video (browser address bar, text, watermark), it is the PRIMARY SOURCE OF TRUTH. Never replace it with a related famous website.
+2. Do not confuse a website built FOR a platform with the platform itself (e.g. A website about Claude Code templates is NOT Claude.ai).
+3. Evidence priority (Evidence Scoring):
+   - Exact URL match (50%)
+   - Exact application name from OCR/audio (25%)
+   - Visual match (15%)
+   - AI reasoning (10%)
+4. If the video only shows a word like "Claude" but no exact website URL or interface, you must return success: false. Set officialLink to null, and in the failureReason field write a message like: "Claude was detected, but the exact website could not be verified."
+5. If confidence is weak (e.g. unknown website), set success: false. Do not guess or return a random similar website.
+6. When a URL is detected and its metadata is provided, use its Title and Description to accurately fill out the description, features, and usage steps.
 
 Return ONLY valid JSON matching this exact schema:
 {
   "success": boolean,
   "confidence": number, // 0-100
-  "appName": string,
-  "description": string,
+  "failureReason": string, // Explanation if success is false
+  "appName": string, // "Unknown" if not found
+  "description": string, // What does this website/app do? Explain in simple words. Include Main Features.
   "type": string,
   "platforms": { "website": boolean, "android": boolean, "iphone": boolean, "windows": boolean, "mac": boolean, "linux": boolean },
   "officialLink": string | null,
   "storeLinks": { "googlePlay": string | null, "appStore": string | null },
-  "usageSteps": string[],
-  "pricing": { "model": "Free" | "Paid" | "Freemium" | "Open Source" | "Trial", "limitations": string },
+  "usageSteps": string[], // How to use it step by step
+  "pricing": { "model": "Free" | "Paid" | "Freemium" | "Open Source" | "Trial" | "Unknown", "limitations": string },
+  "requirements": { "accountNeeded": boolean | "Unknown" },
   "evidence": { "detectedText": string[], "detectedLogos": string[], "uiElements": string[], "detectedSpeech": string },
   "alternatives": [{ "appName": string, "confidence": number }]
 }`
@@ -366,10 +425,12 @@ Return ONLY valid JSON matching this exact schema:
       {
         role: "user",
         content: `Evidence from video frames:
+Extracted URLs: ${JSON.stringify(extractedData.extractedUrls || [])}
 Extracted Text: ${JSON.stringify(extractedData.extractedText)}
 Logos: ${JSON.stringify(extractedData.logos)}
 UI Elements: ${JSON.stringify(extractedData.uiElements)}
 Detected Speech (Audio): ${detectedSpeech ? JSON.stringify(detectedSpeech) : "None"}
+Website Metadata (Scraped from Extracted URLs): ${JSON.stringify(metadataResults)}
 
 Database Matches found:
 ${JSON.stringify(dbMatches)}
