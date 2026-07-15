@@ -156,7 +156,8 @@ Analyze carefully and return ONLY a JSON object matching this schema:
   "logos": ["logo description 1", ...],
   "uiElements": ["sidebar", "navbar", "settings icon", ...]
 }
-Include any recognizable words, brands, menus, or distinct UI layouts.`
+Include any recognizable words, brands, menus, or distinct UI layouts.
+Perform OCR on all visible text, specifically supporting English, Arabic, French, and other languages.`
           },
           ...base64Frames.map((url) => ({ type: "image_url", image_url: { url } })),
         ],

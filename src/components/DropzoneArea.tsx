@@ -25,7 +25,8 @@ export function DropzoneArea({ lang, onAnalyze, isProcessing, onCancel }: Dropzo
     onDrop,
     accept: {
       'video/mp4': ['.mp4'],
-      'video/webm': ['.webm']
+      'video/webm': ['.webm'],
+      'video/quicktime': ['.mov']
     },
     maxSize: 100 * 1024 * 1024, // 100MB
     multiple: false,

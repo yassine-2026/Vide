@@ -8,7 +8,7 @@ export const translations = {
       analyzeBtn: 'Analyze Video',
       analyzingBtn: 'Analyzing...',
       cancelBtn: 'Cancel',
-      supported: 'Supported formats: MP4, WebM (Max 100MB)'
+      supported: 'Supported formats: MP4, WebM, MOV (Max 100MB)'
     },
     progress: {
       uploading: 'Uploading video...',
@@ -60,7 +60,7 @@ export const translations = {
       analyzeBtn: 'تحليل الفيديو',
       analyzingBtn: 'جاري التحليل...',
       cancelBtn: 'إلغاء',
-      supported: 'الصيغ المدعومة: MP4, WebM (الحد الأقصى 100MB)'
+      supported: 'الصيغ المدعومة: MP4, WebM, MOV (الحد الأقصى 100MB)'
     },
     progress: {
       uploading: 'جاري رفع الفيديو...',
